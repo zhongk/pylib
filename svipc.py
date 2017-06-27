@@ -1,5 +1,8 @@
 import capi, ctypes, errno
-from ipchdr import *
+try:
+	from ipchdr import *
+except ImportError:
+	raise ImportError("Please compile 'dump_ipchdr.c' and run")
 
 ftok = capi.cfunc('ftok', 'int', ('path', 'char*'), ('id', 'int'))
 getpagesize = capi.cfunc('getpagesize', 'int')

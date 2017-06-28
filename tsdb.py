@@ -28,7 +28,7 @@ class Connection:
 	
 	def put(self, metric, timestamp, value, **kws):
 		float(value)
-		if not tags:
+		if not kws:
 			raise ValueError('Missing tags')
 		if self.closed:
 			self.connect()

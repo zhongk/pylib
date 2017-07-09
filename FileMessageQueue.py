@@ -1,4 +1,4 @@
-import os, os.path, errno, time, fcntl
+import os, os.path, time, fcntl
 import sqlite3, pickle, threading
 from collections import deque, namedtuple
 
@@ -18,8 +18,7 @@ class _Metadata:
 
 	class _Lock:
 		def __init__(self, file):
-			self.__file = file + '.lock'
-			self.__fd = open(self.__file, 'w')
+			self.__fd = open(file + '.lock', 'w')
 			self.__lock = threading.Lock()
 		
 		def __enter__(self):
@@ -219,7 +218,7 @@ class Producer:
 
 
 class Consumer:
-	Message = namedtuple('Message', ['queue', 'partition', 'key', 'payload', 'timestamp'])
+	Message = namedtuple('ConsumeMessage', ['queue', 'partition', 'key', 'payload', 'timestamp'])
 	
 	def __init__(self, queue_name, group_id, partition=0, path='.', **kws):
 		self.__metadata = _Metadata.get_metadata(path)
@@ -278,12 +277,13 @@ class Consumer:
 		self._log_file = None
 		return self.poll()
 	
-	def _ack(self):
-		self.ack_log = dict(log_file=self._log_name, offset=self._offset)
-	
 	def commit(self):
 		if self.ack_log:
-			self.__metadata.put_consume_log(self.group_id, self.queue['name'], self.partition, **self.ack_log)
+			with self.__metadata.lock:
+				self.__metadata.put_consume_log(self.group_id, self.queue['name'], self.partition, **self.ack_log)
+	
+	def _ack(self):
+		self.ack_log = dict(log_file=self._log_name, offset=self._offset)
 	
 	def __open_nextfile(self):
 		if self._filelist:
@@ -330,8 +330,7 @@ class MultipleConsumer:
 				Consumer(queue_name, group_id, partition, path, auto_ack=False)
 	
 	def __del__(self):
-		partitions = [partition for partition in self._pconsumers.keys()]
-		for partition in partitions:
+		for partition in list(self._pconsumers.keys()):
 			del self._pconsumers[partition]
 	
 	def __iter__(self):
@@ -374,7 +373,7 @@ if __name__ == "__main__":
 	
 	p = Producer(queue_name, path=path, partitions=3)
 	for i in range(n):
-		p.send('This is message %d from pid %d'%(i, os.getpid()))
+		p.send('This is message %d from process %d'%(i, os.getpid()))
 	p.commit()
 	
 	c1 = Consumer(queue_name, path=path, group_id=group_id, partition=1)

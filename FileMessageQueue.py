@@ -187,11 +187,11 @@ class Producer:
 				self.__metadata.put_log(log_file['name'], self.queue['name'], partition, timestamp)
 			self.__metadata.commit()
 		
+		self.cleanup_expired_logs()
+
 	def __flush(self, partition, timestamp):
 		log_file, newfile = self.log_file[partition], False
 		if timestamp != log_file['timestamp']:
-			self.cleanup_expired_logs()
-
 			if log_file['fd']:
 				log_file['fd'].close()
 				log_file['fd'] = None

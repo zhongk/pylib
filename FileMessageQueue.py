@@ -279,6 +279,7 @@ class Consumer:
 		if self.ack_log:
 			with self.__metadata.lock:
 				self.__metadata.put_consume_log(self.group_id, self.queue['name'], self.partition, **self.ack_log)
+				self.__metadata.commit()
 	
 	def _ack(self):
 		self.ack_log = dict(log_file=self.log_file['name'], offset=self.log_file['offset'])

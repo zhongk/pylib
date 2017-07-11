@@ -253,6 +253,7 @@ class TSDB:
 					tsd.close()
 					break
 			except:
+				tsd.close()
 				if callable(error_callback):
 					try:
 						error_callback(request_body, sys.exc_info())

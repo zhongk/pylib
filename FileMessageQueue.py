@@ -313,16 +313,22 @@ class Consumer:
 			if timestamp == self.log_file['timestamp']:
 				path_name = '%s/%s'%(self.path, filename)
 				if self.log_file['offset'] < os.stat(path_name).st_size:
-					f = open(path_name, 'rb')
-					f.seek(self.log_file['offset'])
-					return f
+					try:
+						f = open(path_name, 'rb')
+						f.seek(self.log_file['offset'])
+						return f
+					except FileNotFoundError:
+						return self.__open_nextfile()
 				if not self.__filelist:
 					return None
 				filename, timestamp = self.__filelist.popleft()
 		
-		f = open('%s/%s'%(self.path, filename), 'rb')
-		self.log_file['name'], self.log_file['offset'], self.log_file['timestamp'] = filename, 0, timestamp
-		return f
+		try:
+			f = open('%s/%s'%(self.path, filename), 'rb')
+			self.log_file['name'], self.log_file['offset'], self.log_file['timestamp'] = filename, 0, timestamp
+			return f
+		except FileNotFoundError:
+			return self.__open_nextfile()
 
 
 class MultipleConsumer:

@@ -125,6 +125,13 @@ class _Metadata:
 			logs.append(row)
 		return logs
 	
+	def get_last_log(self, queue_name, partition):
+		c = self.meta.cursor()
+		c.execute('SELECT log_file, timestamp FROM queue_logs'
+		          ' WHERE queue=? AND partition=?'
+		          ' ORDER BY timestamp DESC', (queue_name, partition))
+		return c.fetchone()
+	
 	def put_log(self, log_file, queue_name, partition, timestamp):
 		c = self.meta.cursor()
 		try:
@@ -200,7 +207,7 @@ class Producer:
 			self.__metadata.commit()
 	
 		self.cleanup_expired_logs()
-
+	
 	def __flush(self, partition, timestamp):
 		log_file, newfile = self.log_file[partition], False
 		if timestamp != log_file['timestamp']:
@@ -255,6 +262,9 @@ class Consumer:
 		consume_log = self.__metadata.get_consume_log(self.group_id, self.queue['name'], self.partition)
 		if consume_log:
 			(self.log_file['name'], self.log_file['offset'], self.log_file['timestamp']) = consume_log
+		elif kws.get('poll_latest'):
+			interval = 60 * self.queue['m_interval']
+			self.log_file['timestamp'] = int(time.time())//interval*interval
 		self.ack_log = None
 	
 	def __del__(self):
@@ -283,7 +293,7 @@ class Consumer:
 			if self.auto_ack: self._ack()
 			return Consumer.Message(queue=self.queue['name'], partition=self.partition,
 			                        key=key, payload=message, timestamp=timestamp,
-			                        next=(self.log_file['name'], self.log_file['offset']))
+			                        next=(self.log_file['timestamp'], self.log_file['offset']))
 		except EOFError:
 			pass
 		
@@ -297,6 +307,36 @@ class Consumer:
 				self.__metadata.put_consume_log(self.group_id, self.queue['name'], self.partition, *self.ack_log)
 				self.__metadata.commit()
 			self.ack_log = None
+	
+	def position(self):
+		return (self.log_file['timestamp'], self.log_file['offset'])
+	
+	def seek(self, position):
+		(log_timestamp, offset) = position
+		log_files = self.__metadata.get_logs(self.queue['name'], self.partition, log_timestamp)
+		if not log_files:
+			raise Error('Invalid position(log file not exist)')
+		filename, timestamp = log_files.popleft()
+		if timestamp != log_timestamp:
+			raise Error('Invalid position(log file expired)')
+		
+		path_name = '%s/%s'%(self.path, filename)
+		file_size = os.stat(path_name).st_size
+		if offset > file_size:
+			raise Error('Invalid position(offset is out of log file)')
+		fd = None
+		if offset < file_size:
+			fd = open('%s/%s'%(self.path, filename), 'rb')
+			fd.seek(offset)
+			pickle.load(fd)
+			fd.seek(offset)
+		
+		if self.log_file['fd'] and not self.log_file['fd'].closed:
+			self.log_file['fd'].close()
+		self.log_file = dict(fd=fd, name=filename, offset=offset, timestamp=timestamp)
+		self.__filelist = log_files
+		self._ack()
+		self.commit()
 	
 	def _ack(self):
 		self.ack_log = (self.log_file['name'], self.log_file['offset'])
@@ -314,20 +354,22 @@ class Consumer:
 				path_name = '%s/%s'%(self.path, filename)
 				if self.log_file['offset'] < os.stat(path_name).st_size:
 					try:
-						f = open(path_name, 'rb')
-						f.seek(self.log_file['offset'])
-						return f
+						fd = open(path_name, 'rb')
+						fd.seek(self.log_file['offset'])
+						return fd
 					except FileNotFoundError:
+						self.__filelist.clear()
 						return self.__open_nextfile()
 				if not self.__filelist:
 					return None
 				filename, timestamp = self.__filelist.popleft()
 		
 		try:
-			f = open('%s/%s'%(self.path, filename), 'rb')
+			fd = open('%s/%s'%(self.path, filename), 'rb')
 			self.log_file['name'], self.log_file['offset'], self.log_file['timestamp'] = filename, 0, timestamp
-			return f
+			return fd
 		except FileNotFoundError:
+			self.__filelist.clear()
 			return self.__open_nextfile()
 
 
@@ -339,7 +381,7 @@ class MultipleConsumer:
 		self._messages = {}
 		self._pconsumers = {}
 	
-	def add_consumer(self, queue_name, partitions=None):
+	def add_consumer(self, queue_name, partitions=None, **kws):
 		queue = self.__metadata.get_queue(queue_name)
 		if not queue:
 			raise Error("Queue '%s' not found"%queue_name)
@@ -355,7 +397,7 @@ class MultipleConsumer:
 			assert(not self._pconsumers.get(queue_partition))
 			self._messages[queue_partition] = (None, 0)
 			self._pconsumers[queue_partition] = \
-				Consumer(queue_name, self.group_id, partition, self.__path, auto_ack=False)
+				Consumer(queue_name, self.group_id, partition, self.__path, auto_ack=False, **kws)
 	
 	def __iter__(self):
 		return self
@@ -414,4 +456,3 @@ if __name__ == "__main__":
 	for m in c02:
 		print(m)
 	c02.commit()
-
